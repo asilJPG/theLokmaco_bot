@@ -456,7 +456,7 @@ async def cmd_products(message: Message):
 async def cmd_suppliers(message: Message):
     await message.answer("⏳ Загружаю список поставщиков...")
 
-    raw, ct = await fetch_iiko_raw("v2/entities/employees/list")
+    raw, ct = await fetch_iiko_raw("suppliers")
     if not raw:
         await message.answer("❌ Не удалось получить поставщиков.")
         return
