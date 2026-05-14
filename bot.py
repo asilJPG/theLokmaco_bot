@@ -403,6 +403,31 @@ async def fetch_iiko_list(endpoint: str) -> list | None:
             await iiko_logout(session, token)
 
 
+async def fetch_iiko_raw(endpoint: str) -> tuple[str | None, str | None]:
+    """GET запрос, вернуть сырой текст и content-type."""
+    async with aiohttp.ClientSession() as session:
+        token = await iiko_auth(session)
+        if not token:
+            return None, None
+        try:
+            url = f"{IIKO_SERVER}/resto/api/{endpoint}"
+            headers = {"Cookie": f"key={token}"}
+            async with session.get(url, headers=headers, ssl=False) as resp:
+                raw = await resp.text()
+                ct = resp.content_type or ""
+                log.info(f"GET {endpoint} → {resp.status}, type={ct}, size={len(raw)}")
+                if resp.status == 200:
+                    return raw, ct
+                else:
+                    log.error(f"GET {endpoint} ❌ {resp.status}: {raw[:300]}")
+                    return None, None
+        except Exception as e:
+            log.error(f"GET {endpoint} ❌ {e}")
+            return None, None
+        finally:
+            await iiko_logout(session, token)
+
+
 from aiogram.types import BufferedInputFile
 
 @router.message(Command("products"))
@@ -430,41 +455,55 @@ async def cmd_products(message: Message):
 @router.message(Command("suppliers"))
 async def cmd_suppliers(message: Message):
     await message.answer("⏳ Загружаю список поставщиков...")
-    data = await fetch_iiko_list("suppliers")
-    if not data:
-        await message.answer("❌ Не удалось получить поставщиков")
+
+    # Пробуем несколько эндпоинтов
+    endpoints = [
+        "v2/entities/suppliers/list",
+        "suppliers",
+        "v2/entities/employees/list",
+        "corporation/counteragents",
+    ]
+    raw = None
+    ct = None
+    used = None
+    for ep in endpoints:
+        raw, ct = await fetch_iiko_raw(ep)
+        if raw:
+            used = ep
+            break
+
+    if not raw:
+        await message.answer("❌ Не удалось получить поставщиков. Ни один эндпоинт не сработал.")
         return
 
-    lines = ["ID | Название"]
-    lines.append("-" * 80)
-    for item in data:
-        sid = item.get("id", "—")
-        name = item.get("name", "—")
-        lines.append(f"{sid} | {name}")
-
-    text = "\n".join(lines)
-    file = BufferedInputFile(text.encode("utf-8"), filename="suppliers.txt")
-    await message.answer_document(file, caption=f"🏭 Поставщиков: {len(data)}")
+    # Отправляем сырой ответ как файл чтобы посмотреть формат
+    file = BufferedInputFile(raw.encode("utf-8"), filename="suppliers_raw.txt")
+    await message.answer_document(file, caption=f"🏭 Эндпоинт: {used}\nContent-Type: {ct}\nРазмер: {len(raw)} байт")
 
 
 @router.message(Command("stores"))
 async def cmd_stores(message: Message):
     await message.answer("⏳ Загружаю список складов...")
-    data = await fetch_iiko_list("corporation/stores")
-    if not data:
-        await message.answer("❌ Не удалось получить склады")
+
+    endpoints = [
+        "corporation/stores",
+        "v2/entities/stores/list",
+    ]
+    raw = None
+    ct = None
+    used = None
+    for ep in endpoints:
+        raw, ct = await fetch_iiko_raw(ep)
+        if raw:
+            used = ep
+            break
+
+    if not raw:
+        await message.answer("❌ Не удалось получить склады.")
         return
 
-    lines = ["ID | Название"]
-    lines.append("-" * 80)
-    for item in data:
-        sid = item.get("id", "—")
-        name = item.get("name", "—")
-        lines.append(f"{sid} | {name}")
-
-    text = "\n".join(lines)
-    file = BufferedInputFile(text.encode("utf-8"), filename="stores.txt")
-    await message.answer_document(file, caption=f"🏪 Складов: {len(data)}")
+    file = BufferedInputFile(raw.encode("utf-8"), filename="stores_raw.txt")
+    await message.answer_document(file, caption=f"🏪 Эндпоинт: {used}\nContent-Type: {ct}\nРазмер: {len(raw)} байт")
 
 @router.message()
 async def handle_date(message: Message):
