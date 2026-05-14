@@ -456,54 +456,71 @@ async def cmd_products(message: Message):
 async def cmd_suppliers(message: Message):
     await message.answer("⏳ Загружаю список поставщиков...")
 
-    # Пробуем несколько эндпоинтов
-    endpoints = [
-        "v2/entities/suppliers/list",
-        "suppliers",
-        "v2/entities/employees/list",
-        "corporation/counteragents",
-    ]
-    raw = None
-    ct = None
-    used = None
-    for ep in endpoints:
-        raw, ct = await fetch_iiko_raw(ep)
-        if raw:
-            used = ep
-            break
-
+    raw, ct = await fetch_iiko_raw("v2/entities/employees/list")
     if not raw:
-        await message.answer("❌ Не удалось получить поставщиков. Ни один эндпоинт не сработал.")
+        await message.answer("❌ Не удалось получить поставщиков.")
         return
 
-    # Отправляем сырой ответ как файл чтобы посмотреть формат
-    file = BufferedInputFile(raw.encode("utf-8"), filename="suppliers_raw.txt")
-    await message.answer_document(file, caption=f"🏭 Эндпоинт: {used}\nContent-Type: {ct}\nРазмер: {len(raw)} байт")
+    import xml.etree.ElementTree as ET
+    try:
+        root = ET.fromstring(raw)
+        lines = ["ID | Название"]
+        lines.append("-" * 80)
+        count = 0
+        for emp in root.findall("employee"):
+            is_supplier = emp.findtext("supplier", "false")
+            is_deleted = emp.findtext("deleted", "false")
+            if is_supplier == "true" and is_deleted == "false":
+                sid = emp.findtext("id", "—")
+                name = emp.findtext("name", "—")
+                lines.append(f"{sid} | {name}")
+                count += 1
+
+        text = "\n".join(lines)
+        file = BufferedInputFile(text.encode("utf-8"), filename="suppliers.txt")
+        await message.answer_document(file, caption=f"🏭 Поставщиков: {count}")
+    except Exception as e:
+        log.error(f"XML parse error: {e}")
+        file = BufferedInputFile(raw.encode("utf-8"), filename="suppliers_raw.txt")
+        await message.answer_document(file, caption=f"❌ Ошибка парсинга, сырой ответ")
 
 
 @router.message(Command("stores"))
 async def cmd_stores(message: Message):
     await message.answer("⏳ Загружаю список складов...")
 
-    endpoints = [
-        "corporation/stores",
-        "v2/entities/stores/list",
-    ]
-    raw = None
-    ct = None
-    used = None
-    for ep in endpoints:
-        raw, ct = await fetch_iiko_raw(ep)
-        if raw:
-            used = ep
-            break
-
+    raw, ct = await fetch_iiko_raw("corporation/stores")
     if not raw:
         await message.answer("❌ Не удалось получить склады.")
         return
 
-    file = BufferedInputFile(raw.encode("utf-8"), filename="stores_raw.txt")
-    await message.answer_document(file, caption=f"🏪 Эндпоинт: {used}\nContent-Type: {ct}\nРазмер: {len(raw)} байт")
+    import xml.etree.ElementTree as ET
+    try:
+        root = ET.fromstring(raw)
+        lines = ["ID | Название"]
+        lines.append("-" * 80)
+        count = 0
+        # Пробуем разные варианты структуры
+        stores = root.findall("corporateItemDto") or root.findall("store") or root.findall(".//")
+        for store in stores:
+            sid = store.findtext("id", None)
+            name = store.findtext("name", None)
+            if sid and name:
+                lines.append(f"{sid} | {name}")
+                count += 1
+
+        if count == 0:
+            # Если не распарсили — шлём сырой
+            file = BufferedInputFile(raw.encode("utf-8"), filename="stores_raw.txt")
+            await message.answer_document(file, caption="🏪 Не удалось распарсить, сырой ответ")
+        else:
+            text = "\n".join(lines)
+            file = BufferedInputFile(text.encode("utf-8"), filename="stores.txt")
+            await message.answer_document(file, caption=f"🏪 Складов: {count}")
+    except Exception as e:
+        log.error(f"XML parse error: {e}")
+        file = BufferedInputFile(raw.encode("utf-8"), filename="stores_raw.txt")
+        await message.answer_document(file, caption=f"❌ Ошибка парсинга, сырой ответ")
 
 @router.message()
 async def handle_date(message: Message):
