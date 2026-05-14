@@ -345,6 +345,9 @@ async def cmd_start(message: Message):
         "/report — касса за сегодня\n"
         "/report_yesterday — касса за вчера\n"
         "/top — топ продаж за сегодня\n"
+        "/products — список товаров (файл)\n"
+        "/suppliers — список поставщиков (файл)\n"
+        "/stores — список складов (файл)\n"
         "/chat_id — узнать ID этого чата\n\n"
         "Или отправь дату:\n"
         "13.05.2026 — касса\n"
@@ -371,6 +374,97 @@ async def cmd_top(message: Message):
 @router.message(Command("chat_id"))
 async def cmd_chat_id(message: Message):
     await message.answer(f"Chat ID: <code>{message.chat.id}</code>", parse_mode="HTML")
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Справочники iiko → файлом в личку
+# ═══════════════════════════════════════════════════════════════════
+
+async def fetch_iiko_list(endpoint: str) -> list | None:
+    """GET запрос к справочнику iiko, вернуть JSON."""
+    async with aiohttp.ClientSession() as session:
+        token = await iiko_auth(session)
+        if not token:
+            return None
+        try:
+            url = f"{IIKO_SERVER}/resto/api/{endpoint}"
+            headers = {"Cookie": f"key={token}"}
+            async with session.get(url, headers=headers, ssl=False) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+                else:
+                    raw = await resp.text()
+                    log.error(f"GET {endpoint} ❌ {resp.status}: {raw[:300]}")
+                    return None
+        except Exception as e:
+            log.error(f"GET {endpoint} ❌ {e}")
+            return None
+        finally:
+            await iiko_logout(session, token)
+
+
+from aiogram.types import BufferedInputFile
+
+@router.message(Command("products"))
+async def cmd_products(message: Message):
+    await message.answer("⏳ Загружаю список товаров из iiko...")
+    data = await fetch_iiko_list("v2/entities/products/list")
+    if not data:
+        await message.answer("❌ Не удалось получить товары")
+        return
+
+    lines = ["ID | Название | Тип | Ед.изм"]
+    lines.append("-" * 80)
+    for item in data:
+        pid = item.get("id", "—")
+        name = item.get("name", "—")
+        ptype = item.get("type", "—")
+        unit = item.get("mainUnit", "—")
+        lines.append(f"{pid} | {name} | {ptype} | {unit}")
+
+    text = "\n".join(lines)
+    file = BufferedInputFile(text.encode("utf-8"), filename="products.txt")
+    await message.answer_document(file, caption=f"📦 Товаров: {len(data)}")
+
+
+@router.message(Command("suppliers"))
+async def cmd_suppliers(message: Message):
+    await message.answer("⏳ Загружаю список поставщиков...")
+    data = await fetch_iiko_list("suppliers")
+    if not data:
+        await message.answer("❌ Не удалось получить поставщиков")
+        return
+
+    lines = ["ID | Название"]
+    lines.append("-" * 80)
+    for item in data:
+        sid = item.get("id", "—")
+        name = item.get("name", "—")
+        lines.append(f"{sid} | {name}")
+
+    text = "\n".join(lines)
+    file = BufferedInputFile(text.encode("utf-8"), filename="suppliers.txt")
+    await message.answer_document(file, caption=f"🏭 Поставщиков: {len(data)}")
+
+
+@router.message(Command("stores"))
+async def cmd_stores(message: Message):
+    await message.answer("⏳ Загружаю список складов...")
+    data = await fetch_iiko_list("corporation/stores")
+    if not data:
+        await message.answer("❌ Не удалось получить склады")
+        return
+
+    lines = ["ID | Название"]
+    lines.append("-" * 80)
+    for item in data:
+        sid = item.get("id", "—")
+        name = item.get("name", "—")
+        lines.append(f"{sid} | {name}")
+
+    text = "\n".join(lines)
+    file = BufferedInputFile(text.encode("utf-8"), filename="stores.txt")
+    await message.answer_document(file, caption=f"🏪 Складов: {len(data)}")
 
 @router.message()
 async def handle_date(message: Message):
